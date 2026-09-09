@@ -1,0 +1,1607 @@
+{
+  "datasets": [
+    {
+      "name": "01f7088c",
+      "displayName": "LoanDetail",
+      "queryLines": [
+        "-- ზოგადი სესხების ცხრილი და მიმოხილვა\r\n",
+        "SELECT\r\n",
+        "    f.sub_grade_code,\r\n",
+        "    f.grade_code,\r\n",
+        "    f.term_months,\r\n",
+        "    f.issue_year,\r\n",
+        "    p.purpose_group,\r\n",
+        "    CASE WHEN f.is_charged_off THEN 'Charged Off' ELSE 'Fully Paid' END AS loan_status_label,\r\n",
+        "    CASE\r\n",
+        "        WHEN f.dti IS NULL THEN 'უცნობი'\r\n",
+        "        WHEN f.dti < 10   THEN '10%-მდე'\r\n",
+        "        WHEN f.dti < 20   THEN '10-20%'\r\n",
+        "        WHEN f.dti < 30   THEN '20-30%'\r\n",
+        "        ELSE                   '30%+'\r\n",
+        "    END AS dti_band,\r\n",
+        "    f.funded_amount,\r\n",
+        "    f.is_charged_off,\r\n",
+        "    f.net_result\r\n",
+        "FROM getdata.calculated.fct_lc_loan_performance f\r\n",
+        "LEFT JOIN getdata.calculated.dim_lc_purpose p ON f.purpose_code = p.purpose_code"
+      ],
+      "columns": [
+        {
+          "displayName": "LoanCount",
+          "description": "სესხების რაოდენობა",
+          "expression": "COUNT(*)"
+        },
+        {
+          "displayName": "FundedVolume",
+          "description": "ჯამური გაცემული თანხა",
+          "expression": "SUM(funded_amount)"
+        },
+        {
+          "displayName": "ChargedOffCount",
+          "description": "ჩამოწერილი სესხების რაოდენობა",
+          "expression": "SUM(CASE \r\n      WHEN is_charged_off \r\n        THEN 1 \r\n        ELSE 0 \r\n    END)"
+        },
+        {
+          "displayName": "ChargeOffRatePct",
+          "description": "სესხების რა წილმა ვერ დააბრუნა ფული, Charged Off %",
+          "expression": "100.0 * MEASURE(ChargedOffCount) / MEASURE(LoanCount)"
+        },
+        {
+          "displayName": "NetResultSum",
+          "description": "ჯამური წმინდა ფინანსური შედეგი",
+          "expression": "SUM(net_result)"
+        },
+        {
+          "displayName": "WeightedMarginPct",
+          "description": "საერთო მარჟა",
+          "expression": "100.0 * MEASURE(NetResultSum) / MEASURE(FundedVolume)"
+        }
+      ]
+    },
+    {
+      "name": "f2381662",
+      "displayName": "SubGradePerformance",
+      "queryLines": [
+        "-- წინასწარ დავაჯგუფეთ მონაცემები, რისკის ქვეტიოპი x ვადის დონეზე. სკატერ ჩარტისთვის და \"10 სუსტი სეგმენტის\"-თვის\r\n",
+        "SELECT\r\n",
+        "    f.sub_grade_code,\r\n",
+        "    f.term_months,\r\n",
+        "    COUNT(*) AS loan_count,\r\n",
+        "    ROUND(100.0 * SUM(CASE WHEN f.is_charged_off THEN 1 ELSE 0 END) / COUNT(*), 2) AS charge_off_rate_pct,\r\n",
+        "    ROUND(SUM(f.net_result) / SUM(f.funded_amount) * 100, 2) AS weighted_net_margin_pct,\r\n",
+        "    CASE\r\n",
+        "        WHEN SUM(f.net_result) / SUM(f.funded_amount) * 100 < 0\r\n",
+        "            THEN CONCAT(CAST(f.term_months AS STRING), ' - ზარალშია')\r\n",
+        "        ELSE CONCAT(CAST(f.term_months AS STRING), ' - მოგებაშია')\r\n",
+        "    END AS term_margin_group\r\n",
+        "FROM getdata.calculated.fct_lc_loan_performance f\r\n",
+        "GROUP BY f.sub_grade_code, f.grade_code, f.term_months\r\n",
+        "ORDER BY f.grade_code, f.sub_grade_code"
+      ]
+    },
+    {
+      "name": "fb21adbf",
+      "displayName": "GradeMixByYear",
+      "queryLines": [
+        "-- რისკის კატეგორიების განაწილება წლების მიხედვით \r\n",
+        "WITH grade_lookup AS (\r\n",
+        "    SELECT DISTINCT grade_code, grade_sort_order FROM getdata.calculated.dim_lc_grade\r\n",
+        "),\r\n",
+        "base AS (\r\n",
+        "    SELECT\r\n",
+        "        f.issue_year,\r\n",
+        "        gl.grade_code,\r\n",
+        "        gl.grade_sort_order,\r\n",
+        "        COUNT(*) AS loan_count\r\n",
+        "    FROM getdata.calculated.fct_lc_loan_performance f\r\n",
+        "    LEFT JOIN grade_lookup gl ON LEFT(f.sub_grade_code, 1) = gl.grade_code\r\n",
+        "    WHERE f.term_months = 36\r\n",
+        "    GROUP BY f.issue_year, gl.grade_code, gl.grade_sort_order\r\n",
+        ")\r\n",
+        "SELECT\r\n",
+        "    issue_year,\r\n",
+        "    grade_code,\r\n",
+        "    grade_sort_order,\r\n",
+        "    CASE\r\n",
+        "        WHEN :display_mode = 'პროცენტი'\r\n",
+        "            THEN ROUND(100.0 * loan_count / SUM(loan_count) OVER (PARTITION BY issue_year), 2)\r\n",
+        "        ELSE loan_count\r\n",
+        "    END AS display_value\r\n",
+        "FROM base\r\n",
+        "ORDER BY issue_year"
+      ],
+      "parameters": [
+        {
+          "displayName": "display_mode",
+          "keyword": "display_mode",
+          "dataType": "STRING",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": [
+                {
+                  "value": "თანხა"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "65a1bfb3",
+      "displayName": "DisplayModeOptions",
+      "queryLines": [
+        "-- პროცენტი VS თანხა ვიზუალისთვის\r\n",
+        "\r\n",
+        "SELECT * FROM (VALUES ('თანხა'), ('პროცენტი')) AS t(display_mode_option)"
+      ]
+    },
+    {
+      "name": "31e31a29",
+      "displayName": "MarginVsDefaultChange",
+      "queryLines": [
+        "-- მესამე გვერდზე არსებული ქაუნთერებისთვის\r\n",
+        "SELECT\r\n",
+        "    ROUND(\r\n",
+        "        (SUM(CASE WHEN f.issue_year = 2015 THEN f.net_result ELSE 0 END)\r\n",
+        "         / NULLIF(SUM(CASE WHEN f.issue_year = 2015 THEN f.funded_amount ELSE 0 END), 0) * 100)\r\n",
+        "        -\r\n",
+        "        (SUM(CASE WHEN f.issue_year = 2013 THEN f.net_result ELSE 0 END)\r\n",
+        "         / NULLIF(SUM(CASE WHEN f.issue_year = 2013 THEN f.funded_amount ELSE 0 END), 0) * 100)\r\n",
+        "    , 2) AS margin_change_pp,\r\n",
+        "\r\n",
+        "    ROUND(\r\n",
+        "        (100.0 * SUM(CASE WHEN f.issue_year = 2015 AND f.is_charged_off THEN 1 ELSE 0 END)\r\n",
+        "         / NULLIF(SUM(CASE WHEN f.issue_year = 2015 THEN 1 ELSE 0 END), 0))\r\n",
+        "        -\r\n",
+        "        (100.0 * SUM(CASE WHEN f.issue_year = 2013 AND f.is_charged_off THEN 1 ELSE 0 END)\r\n",
+        "         / NULLIF(SUM(CASE WHEN f.issue_year = 2013 THEN 1 ELSE 0 END), 0))\r\n",
+        "    , 2) AS charge_off_change_pp\r\n",
+        "\r\n",
+        "FROM getdata.calculated.fct_lc_loan_performance f\r\n",
+        "WHERE f.term_months = 36\r\n",
+        "  AND f.issue_year IN (2013, 2015)"
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "8083cea7",
+      "displayName": "პორტფელის მიმოხილვა",
+      "layout": [
+        {
+          "widget": {
+            "name": "sesxebis-raodenoba",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "01f7088c",
+                  "fields": [
+                    {
+                      "name": "measure(LoanCount)",
+                      "expression": "MEASURE(`LoanCount`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "headerAlignment": "center",
+                "title": {
+                  "value": "სესხების რაოდენობა",
+                  "fields": []
+                }
+              },
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "measure(LoanCount)"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 3,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "0585191d",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "01f7088c",
+                  "fields": [
+                    {
+                      "name": "measure(FundedVolume)",
+                      "expression": "MEASURE(`FundedVolume`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "headerAlignment": "center",
+                "title": {
+                  "value": "თანხის მოცულობა",
+                  "fields": []
+                }
+              },
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "measure(FundedVolume)",
+                  "format": {
+                    "type": "number-currency",
+                    "currencyCode": "USD",
+                    "abbreviation": "compact",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 2
+                    }
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 0,
+            "width": 3,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "e0adb289",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "01f7088c",
+                  "fields": [
+                    {
+                      "name": "measure(WeightedMarginPct)",
+                      "expression": "MEASURE(`WeightedMarginPct`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "headerAlignment": "center",
+                "title": {
+                  "value": "საერთო მარჟა",
+                  "fields": []
+                }
+              },
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "measure(WeightedMarginPct)"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 9,
+            "y": 0,
+            "width": 3,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "86153adc",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "01f7088c",
+                  "fields": [
+                    {
+                      "name": "measure(ChargeOffRatePct)",
+                      "expression": "MEASURE(`ChargeOffRatePct`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "headerAlignment": "center",
+                "title": {
+                  "value": "საშუალო დეფოლტი",
+                  "fields": []
+                }
+              },
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "measure(ChargeOffRatePct)",
+                  "format": {
+                    "type": "number-plain",
+                    "abbreviation": "compact",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 2
+                    },
+                    "significantFigures": {
+                      "type": "max",
+                      "figures": 3
+                    },
+                    "hideGroupSeparator": true,
+                    "negativeSign": "standard"
+                  },
+                  "formatTemplate": "{{ @formatted }}"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 0,
+            "width": 3,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "gatsemis-moculoba-wlebis-mixedvit",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "01f7088c",
+                  "fields": [
+                    {
+                      "name": "issue_year",
+                      "expression": "`issue_year`"
+                    },
+                    {
+                      "name": "measure(FundedVolume)",
+                      "expression": "MEASURE(`FundedVolume`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "გაცემის მოცულობა წლების მიხედვით",
+                  "fields": []
+                }
+              },
+              "version": 3,
+              "mark": {
+                "lineShape": "linear"
+              },
+              "widgetType": "area",
+              "encodings": {
+                "x": {
+                  "fieldName": "issue_year",
+                  "displayName": "სესხის გაცემის თარიღი",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "y": {
+                  "fieldName": "measure(FundedVolume)",
+                  "displayName": "მოცულობა (მლნ $)",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "label": {
+                  "show": true
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 10,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "sesxis-statusi-moculobit",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "01f7088c",
+                  "fields": [
+                    {
+                      "name": "loan_status_label",
+                      "expression": "`loan_status_label`"
+                    },
+                    {
+                      "name": "measure(FundedVolume)",
+                      "expression": "MEASURE(`FundedVolume`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "სესხის სტატუსი მოცულობით",
+                  "fields": []
+                }
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "loan_status_label",
+                  "displayName": "სესხის ტიპი",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "fieldName": "measure(FundedVolume)",
+                  "displayName": "მოცულობა (მლნ $)",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "loan_status_label",
+                  "displayName": "სესხის ტიპი",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "Fully Paid",
+                        "color": "#2D6A4F"
+                      },
+                      {
+                        "value": "Charged Off",
+                        "color": "#9D0208"
+                      }
+                    ]
+                  }
+                },
+                "label": {
+                  "show": true
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 10,
+            "y": 2,
+            "width": 2,
+            "height": 8
+          }
+        },
+        {
+          "widget": {
+            "name": "vadis-shedareba",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "01f7088c",
+                  "fields": [
+                    {
+                      "name": "term_months",
+                      "expression": "`term_months`"
+                    },
+                    {
+                      "name": "measure(LoanCount)",
+                      "expression": "MEASURE(`LoanCount`)"
+                    },
+                    {
+                      "name": "measure(FundedVolume)",
+                      "expression": "MEASURE(`FundedVolume`)"
+                    },
+                    {
+                      "name": "measure(ChargeOffRatePct)",
+                      "expression": "MEASURE(`ChargeOffRatePct`)"
+                    },
+                    {
+                      "name": "measure(WeightedMarginPct)",
+                      "expression": "MEASURE(`WeightedMarginPct`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "ვადის შედარება",
+                  "fields": []
+                }
+              },
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "term_months",
+                    "displayName": "ვადა (თვე)"
+                  },
+                  {
+                    "fieldName": "measure(LoanCount)",
+                    "displayName": "სესხების რაოდენობა"
+                  },
+                  {
+                    "fieldName": "measure(FundedVolume)",
+                    "displayName": "მოცულობა (მლნ $)"
+                  },
+                  {
+                    "fieldName": "measure(ChargeOffRatePct)",
+                    "displayName": "დეფოლტის მაჩვენებელი (%)"
+                  },
+                  {
+                    "fieldName": "measure(WeightedMarginPct)",
+                    "displayName": "საერთო მარჟა (%)"
+                  }
+                ]
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 7,
+            "width": 10,
+            "height": 3
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    },
+    {
+      "name": "18f7f30c",
+      "displayName": "Global Filters",
+      "pageType": "PAGE_TYPE_GLOBAL_FILTERS",
+      "layoutVersion": "GRID_V1"
+    },
+    {
+      "name": "85f079b7",
+      "displayName": "რისკი vs. მომგებიანობა",
+      "layout": [
+        {
+          "widget": {
+            "name": "3fc9b009",
+            "queries": [
+              {
+                "name": "dashboards/01f1a91c325915f68c1f5af243b4af84/datasets/01f1a91c3f8e1d03af74cca042ecb2cf_term_months",
+                "query": {
+                  "datasetName": "01f7088c",
+                  "fields": [
+                    {
+                      "name": "term_months",
+                      "expression": "`term_months`"
+                    },
+                    {
+                      "name": "term_months_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "<span style=\"text-align:center;display:block\"><span style=\"font-size: 12px;font-weight: 700;\">სესხის ვადა</span></span>",
+                  "fields": []
+                }
+              },
+              "widgetType": "filter-single-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "term_months",
+                    "queryName": "dashboards/01f1a91c325915f68c1f5af243b4af84/datasets/01f1a91c3f8e1d03af74cca042ecb2cf_term_months"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 11,
+            "y": 0,
+            "width": 1,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "27a2832c",
+            "queries": [
+              {
+                "name": "dashboards/01f1a91c325915f68c1f5af243b4af84/datasets/01f1a91c3f8e1d03af74cca042ecb2cf_grade_code",
+                "query": {
+                  "datasetName": "01f7088c",
+                  "fields": [
+                    {
+                      "name": "grade_code",
+                      "expression": "`grade_code`"
+                    },
+                    {
+                      "name": "grade_code_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "<span style=\"text-align:center;display:block\"><span style=\"font-size: 12px;font-weight: 700;\">რისკის კატეგორია</span></span>",
+                  "fields": []
+                }
+              },
+              "widgetType": "filter-multi-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "grade_code",
+                    "queryName": "dashboards/01f1a91c325915f68c1f5af243b4af84/datasets/01f1a91c3f8e1d03af74cca042ecb2cf_grade_code"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 11,
+            "y": 4,
+            "width": 1,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "riski-vs-momgebianoba-kvegreidis-mikhedvit",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "f2381662",
+                  "fields": [
+                    {
+                      "name": "term_margin_group",
+                      "expression": "`term_margin_group`"
+                    },
+                    {
+                      "name": "loan_count",
+                      "expression": "`loan_count`"
+                    },
+                    {
+                      "name": "sub_grade_code",
+                      "expression": "`sub_grade_code`"
+                    },
+                    {
+                      "name": "charge_off_rate_pct",
+                      "expression": "`charge_off_rate_pct`"
+                    },
+                    {
+                      "name": "weighted_net_margin_pct",
+                      "expression": "`weighted_net_margin_pct`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "რისკი vs. მომგებიანობა, ქვეგრეიდის მიხედვით",
+                  "fields": []
+                }
+              },
+              "version": 3,
+              "mark": {
+                "opacity": 0.83
+              },
+              "widgetType": "scatter",
+              "encodings": {
+                "x": {
+                  "fieldName": "charge_off_rate_pct",
+                  "displayName": "გადაუხდელობის მაჩვენებელი (%)",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "y": {
+                  "fieldName": "weighted_net_margin_pct",
+                  "displayName": "საერთო მარჟა (%)",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "term_margin_group",
+                  "displayName": "ვადა და შედეგი",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "36 - ზარალშია",
+                        "color": "#9C2D2D"
+                      },
+                      {
+                        "value": "36 - მოგებაშია",
+                        "color": "#F9C784"
+                      },
+                      {
+                        "value": "60 - მოგებაშია",
+                        "color": "#A9D6E5"
+                      }
+                    ]
+                  }
+                },
+                "extra": [
+                  {
+                    "fieldName": "loan_count",
+                    "displayName": "სესხების რაოდენობა"
+                  },
+                  {
+                    "fieldName": "sub_grade_code",
+                    "displayName": "რისკის ქვეკატეგორია"
+                  }
+                ]
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 7,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "saerto-marja-greidis-mikhedvit",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "01f7088c",
+                  "fields": [
+                    {
+                      "name": "grade_code",
+                      "expression": "`grade_code`"
+                    },
+                    {
+                      "name": "measure(WeightedMarginPct)",
+                      "expression": "MEASURE(`WeightedMarginPct`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "headerAlignment": "center",
+                "title": {
+                  "value": "საერთო მარჟა გრეიდის მიხედვით",
+                  "fields": []
+                }
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "grade_code",
+                  "displayName": "რისკის კატეგორია",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "fieldName": "measure(WeightedMarginPct)",
+                  "displayName": "საერთო მარჟა (%)",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "label": {
+                  "show": true
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 7,
+            "y": 0,
+            "width": 4,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "qvelas-sushti-10-segmenti",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "f2381662",
+                  "fields": [
+                    {
+                      "name": "sub_grade_code",
+                      "expression": "`sub_grade_code`"
+                    },
+                    {
+                      "name": "term_months",
+                      "expression": "`term_months`"
+                    },
+                    {
+                      "name": "loan_count",
+                      "expression": "`loan_count`"
+                    },
+                    {
+                      "name": "charge_off_rate_pct",
+                      "expression": "`charge_off_rate_pct`"
+                    },
+                    {
+                      "name": "weighted_net_margin_pct",
+                      "expression": "`weighted_net_margin_pct`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "headerAlignment": "left",
+                "title": {
+                  "value": "ყველაზე სუსტი 10 სეგმენტი",
+                  "fields": []
+                }
+              },
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "sub_grade_code",
+                    "displayName": "რისკის ქვეკატეგორია"
+                  },
+                  {
+                    "fieldName": "term_months",
+                    "displayName": "ვადა (თვე)"
+                  },
+                  {
+                    "fieldName": "loan_count",
+                    "displayName": "სესხების რაოდენობა"
+                  },
+                  {
+                    "fieldName": "charge_off_rate_pct",
+                    "displayName": "გადაუხდელობის მაჩვენებელი (%)"
+                  },
+                  {
+                    "fieldName": "weighted_net_margin_pct",
+                    "displayName": "საერთო მარჟა (%)"
+                  }
+                ]
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 6,
+            "width": 8,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "saerto-marja-valis-tvirtis-mikhedvit",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "01f7088c",
+                  "fields": [
+                    {
+                      "name": "dti_band",
+                      "expression": "`dti_band`"
+                    },
+                    {
+                      "name": "measure(WeightedMarginPct)",
+                      "expression": "MEASURE(`WeightedMarginPct`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "headerAlignment": "center",
+                "title": {
+                  "value": "საერთო მარჟა ვალის ტვირთის მიხედვით",
+                  "fields": []
+                }
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "dti_band",
+                  "displayName": "ვალით დატვირთულობა",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "fieldName": "measure(WeightedMarginPct)",
+                  "displayName": "საერთო მარჟა (%)",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "label": {
+                  "show": true
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 6,
+            "width": 4,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "a756dbc7",
+            "queries": [
+              {
+                "name": "dashboards/01f1a91c325915f68c1f5af243b4af84/datasets/01f1a91c3f8e1d03af74cca042ecb2cf_purpose_group",
+                "query": {
+                  "datasetName": "01f7088c",
+                  "fields": [
+                    {
+                      "name": "purpose_group",
+                      "expression": "`purpose_group`"
+                    },
+                    {
+                      "name": "purpose_group_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "<span style=\"text-align:center;display:block\"><span style=\"font-size: 12px;font-weight: 700;\">დანიშნულების ჯგუფი</span></span>",
+                  "fields": []
+                }
+              },
+              "widgetType": "filter-single-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "purpose_group",
+                    "queryName": "dashboards/01f1a91c325915f68c1f5af243b4af84/datasets/01f1a91c3f8e1d03af74cca042ecb2cf_purpose_group"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 11,
+            "y": 2,
+            "width": 1,
+            "height": 2
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    },
+    {
+      "name": "31e68620",
+      "displayName": "სად იკარგება მოგება",
+      "layout": [
+        {
+          "widget": {
+            "name": "gatsemis-moculoba-tslebis-mikhedvit-36-tve",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "01f7088c",
+                  "fields": [
+                    {
+                      "name": "issue_year",
+                      "expression": "`issue_year`"
+                    },
+                    {
+                      "name": "measure(FundedVolume)",
+                      "expression": "MEASURE(`FundedVolume`)"
+                    },
+                    {
+                      "name": "measure(WeightedMarginPct)",
+                      "expression": "MEASURE(`WeightedMarginPct`)"
+                    }
+                  ],
+                  "filters": [
+                    {
+                      "expression": "`term_months` IN (36)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "headerAlignment": "center",
+                "title": {
+                  "value": "გაცემის მოცულობა წლების მიხედვით (36 თვე)",
+                  "fields": []
+                }
+              },
+              "version": 1,
+              "mark": {
+                "colors": [
+                  "#90E0EF",
+                  "#FF7600",
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 7
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 8
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 9
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 10
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 7
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 8
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 9
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 10
+                  }
+                ]
+              },
+              "widgetType": "combo",
+              "encodings": {
+                "x": {
+                  "fieldName": "issue_year",
+                  "displayName": "სესხის გაცემის წელი",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "label": {
+                  "show": true
+                },
+                "color": {
+                  "legend": {
+                    "position": "bottom"
+                  }
+                },
+                "y": {
+                  "primary": {
+                    "fields": [
+                      {
+                        "fieldName": "measure(FundedVolume)",
+                        "displayName": "სესხების მოცულობა (მლნ $)"
+                      }
+                    ],
+                    "scale": {
+                      "type": "quantitative"
+                    }
+                  },
+                  "secondary": {
+                    "fields": [
+                      {
+                        "fieldName": "measure(WeightedMarginPct)",
+                        "displayName": "საერთო მარჟა (%)"
+                      }
+                    ],
+                    "scale": {
+                      "type": "quantitative"
+                    }
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 7,
+            "width": 12,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "7b751695",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "fb21adbf",
+                  "fields": [
+                    {
+                      "name": "grade_code",
+                      "expression": "`grade_code`"
+                    },
+                    {
+                      "name": "issue_year",
+                      "expression": "`issue_year`"
+                    },
+                    {
+                      "name": "display_value",
+                      "expression": "`display_value`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "headerAlignment": "center",
+                "title": {
+                  "value": "რისკის კატეგორიების თანაფარდობა წლების მიხედვით",
+                  "fields": []
+                }
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "issue_year",
+                  "displayName": "სესხის გაცემის წელი",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "y": {
+                  "fieldName": "display_value",
+                  "displayName": "სესხის რაოდენობა ან %",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "grade_code",
+                  "displayName": "რისკის კატეგორია",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "G",
+                        "color": "#03045E"
+                      },
+                      {
+                        "value": "F",
+                        "color": "#023E8A"
+                      },
+                      {
+                        "value": "E",
+                        "color": "#0077B6"
+                      },
+                      {
+                        "value": "D",
+                        "color": "#00B4D8"
+                      },
+                      {
+                        "value": "C",
+                        "color": "#48CAE4"
+                      },
+                      {
+                        "value": "B",
+                        "color": "#90E0EF"
+                      },
+                      {
+                        "value": "A",
+                        "color": "#CAF0F8"
+                      }
+                    ]
+                  }
+                },
+                "label": {
+                  "show": true
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 12,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "machvenebeli",
+            "queries": [
+              {
+                "name": "dashboards/01f1a91c325915f68c1f5af243b4af84/datasets/01f1a9bf10611754aa551f537769d986_display_mode_option",
+                "query": {
+                  "datasetName": "65a1bfb3",
+                  "fields": [
+                    {
+                      "name": "display_mode_option",
+                      "expression": "`display_mode_option`"
+                    },
+                    {
+                      "name": "display_mode_option_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "parameter_dashboards/01f1a91c325915f68c1f5af243b4af84/datasets/01f1a9bd6eb119d8a2a5c1d340aa52b5_display_mode",
+                "query": {
+                  "datasetName": "fb21adbf",
+                  "parameters": [
+                    {
+                      "name": "display_mode",
+                      "keyword": "display_mode"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "showDescription": true,
+                "title": {
+                  "value": "ჩვენების ტიპი",
+                  "fields": []
+                },
+                "description": {
+                  "value": "თანხა თუ პროცენტი",
+                  "fields": []
+                }
+              },
+              "widgetType": "filter-single-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "display_mode_option",
+                    "queryName": "dashboards/01f1a91c325915f68c1f5af243b4af84/datasets/01f1a9bf10611754aa551f537769d986_display_mode_option"
+                  },
+                  {
+                    "parameterName": "display_mode",
+                    "queryName": "parameter_dashboards/01f1a91c325915f68c1f5af243b4af84/datasets/01f1a9bd6eb119d8a2a5c1d340aa52b5_display_mode"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 9,
+            "y": 0,
+            "width": 3,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "gadaukhdelobis-zrda",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "31e31a29",
+                  "fields": [
+                    {
+                      "name": "sum(charge_off_change_pp)",
+                      "expression": "SUM(`charge_off_change_pp`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "showDescription": true,
+                "headerAlignment": "center",
+                "title": {
+                  "value": "<span style=\"font-size: 14px;\">გადაუხდელობის ზრდა</span>",
+                  "fields": []
+                },
+                "description": {
+                  "value": "2013→2015",
+                  "fields": []
+                }
+              },
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(charge_off_change_pp)"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 3,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "saerto-marzis-tsvlileba",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "31e31a29",
+                  "fields": [
+                    {
+                      "name": "margin_change_pp",
+                      "expression": "`margin_change_pp`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "showDescription": true,
+                "headerAlignment": "center",
+                "title": {
+                  "value": "<span style=\"font-size: 14px;\">საერთო მარჟის ცვლილება</span>",
+                  "fields": []
+                },
+                "description": {
+                  "value": "2013→2015",
+                  "fields": []
+                }
+              },
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "margin_change_pp"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 0,
+            "width": 3,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "jamuri-zarali",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "01f7088c",
+                  "fields": [
+                    {
+                      "name": "measure(NetResultSum)",
+                      "expression": "MEASURE(`NetResultSum`)"
+                    }
+                  ],
+                  "filters": [
+                    {
+                      "expression": "`sub_grade_code` IN ('F5', 'G1')"
+                    },
+                    {
+                      "expression": "`term_months` IN (36)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "showDescription": true,
+                "headerAlignment": "center",
+                "title": {
+                  "value": "<span style=\"font-size: 14px;\">ჯამური ზარალი</span>",
+                  "fields": []
+                },
+                "description": {
+                  "value": "F5/G1, 36 თვე ($)",
+                  "fields": []
+                }
+              },
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "measure(NetResultSum)"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 0,
+            "width": 3,
+            "height": 2
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    }
+  ],
+  "uiSettings": {
+    "theme": {
+      "canvasBackgroundColor": {
+        "light": "#F6FAFB",
+        "dark": "#1B1F23"
+      },
+      "widgetBackgroundColor": {
+        "light": "#FFFFFF",
+        "dark": "#2A2F35"
+      },
+      "widgetBorderColor": {
+        "light": "#D7E1E9",
+        "dark": "#3C444C"
+      },
+      "fontColor": {
+        "light": "#374151",
+        "dark": "#E4E9EE"
+      },
+      "selectionColor": {
+        "light": "#5FA8D3",
+        "dark": "#5FA8D3"
+      },
+      "visualizationColors": [
+        "#5FA8D3",
+        "#70BEE1",
+        "#89CCE7",
+        "#A1DAEC",
+        "#B3E6DC",
+        "#89C7A8",
+        "#6EAD80",
+        "#589F60",
+        "#478743",
+        "#356C2A"
+      ],
+      "widgetHeaderAlignment": "CENTER",
+      "widgetPadding": 4,
+      "widgetCornerRadius": 8,
+      "widgetShadow": 20
+    },
+    "applyModeEnabled": false
+  }
+}
