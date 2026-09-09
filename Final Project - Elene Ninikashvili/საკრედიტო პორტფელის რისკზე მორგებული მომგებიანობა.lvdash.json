@@ -163,6 +163,30 @@
         "WHERE f.term_months = 36\r\n",
         "  AND f.issue_year IN (2013, 2015)"
       ]
+    },
+    {
+      "name": "19d8e495",
+      "displayName": "WorstSegments",
+      "queryLines": [
+        "SELECT\r\n",
+        "    sub_grade_code,\r\n",
+        "    term_months,\r\n",
+        "    loan_count,\r\n",
+        "    charge_off_rate_pct,\r\n",
+        "    weighted_net_margin_pct\r\n",
+        "FROM (\r\n",
+        "    SELECT\r\n",
+        "        f.sub_grade_code,\r\n",
+        "        f.term_months,\r\n",
+        "        COUNT(*) AS loan_count,\r\n",
+        "        ROUND(100.0 * SUM(CASE WHEN f.is_charged_off THEN 1 ELSE 0 END) / COUNT(*), 2) AS charge_off_rate_pct,\r\n",
+        "        ROUND(SUM(f.net_result) / SUM(f.funded_amount) * 100, 2) AS weighted_net_margin_pct\r\n",
+        "    FROM getdata.calculated.fct_lc_loan_performance f\r\n",
+        "    GROUP BY f.sub_grade_code, f.term_months\r\n",
+        ")\r\n",
+        "ORDER BY weighted_net_margin_pct ASC\r\n",
+        "LIMIT 10"
+      ]
     }
   ],
   "pages": [
@@ -794,7 +818,7 @@
                       },
                       {
                         "value": "60 - მოგებაშია",
-                        "color": "#A9D6E5"
+                        "color": "#A1DAEC"
                       }
                     ]
                   }
@@ -854,6 +878,47 @@
                 }
               },
               "version": 3,
+              "mark": {
+                "colors": [
+                  "#A1DAEC",
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 2
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 3
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 4
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 5
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 6
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 7
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 8
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 9
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 10
+                  }
+                ]
+              },
               "widgetType": "bar",
               "encodings": {
                 "x": {
@@ -893,7 +958,7 @@
               {
                 "name": "main_query",
                 "query": {
-                  "datasetName": "f2381662",
+                  "datasetName": "19d8e495",
                   "fields": [
                     {
                       "name": "sub_grade_code",
@@ -999,6 +1064,47 @@
                 }
               },
               "version": 3,
+              "mark": {
+                "colors": [
+                  "#A1DAEC",
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 2
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 3
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 4
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 5
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 6
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 7
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 8
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 9
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 10
+                  }
+                ]
+              },
               "widgetType": "bar",
               "encodings": {
                 "x": {
@@ -1131,7 +1237,10 @@
               "version": 1,
               "mark": {
                 "colors": [
-                  "#90E0EF",
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 4
+                  },
                   "#FF7600",
                   {
                     "themeColorType": "visualizationColors",
